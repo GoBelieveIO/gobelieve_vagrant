@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 import config
 import requests
-from urllib import urlencode
 import logging
 import json
 import time
 import sys
-import umysql
+import pymysql
 import redis
 import pprint
 from group import Group
@@ -17,10 +16,15 @@ import config
 
 publish_message = Group.publish_message
 
-rds = redis.StrictRedis(host=config.REDIS_HOST, port=config.REDIS_PORT,
-                        password=config.REDIS_PASSWORD, db=config.REDIS_DB)
 
-db = Mysql(*config.MYSQL)
+rds = redis.StrictRedis(host=config.REDIS_HOST, password=config.REDIS_PASSWORD,
+                        port=config.REDIS_PORT, db=config.REDIS_DB, decode_responses=True)
+
+
+db = Mysql(config.MYSQL_HOST, config.MYSQL_USER, config.MYSQL_PASSWD,
+           config.MYSQL_DATABASE, config.MYSQL_PORT,
+           config.MYSQL_CHARSET, config.MYSQL_AUTOCOMMIT)
+
 APPID = config.APPID
 
 def create_group(master, name, is_super, members):
@@ -29,12 +33,21 @@ def create_group(master, name, is_super, members):
                              is_super, members)
     
     s = 1 if is_super else 0
-    content = "%d,%d,%d"%(gid, appid, s)
-    publish_message(rds, "group_create", content)
+    content = {
+        "group_id":gid,
+        "app_id":appid,
+        "super":s,
+        "name":Group.GROUP_EVENT_CREATE
+    }    
+    publish_message(rds, content)
     
     for mem in members:
-        content = "%d,%d"%(gid, mem)
-        publish_message(rds, "group_member_add", content)
+        content = {
+            "group_id":gid,
+            "member_id":mem,
+            "name":Group.GROUP_EVENT_MEMBER_ADD
+        }        
+        publish_message(rds, content)
     
     v = {
         "group_id":gid, 
@@ -61,9 +74,8 @@ def delete_group(gid):
     op = {"disband":v}
     send_group_notification(appid, gid, op, None)
 
-    content = "%d"%gid
-    publish_message(rds, "group_disband", content)
-
+    content = {"group_id":gid, "name":Group.GROUP_EVENT_DISBAND}    
+    publish_message(rds, content)
 
 
 
@@ -79,8 +91,14 @@ def upgrade_group(gid):
 
     Group.update_group_super(db, gid, 1)
 
-    content = "%d,%d,%d"%(gid, appid, 1)
-    publish_message(rds, "group_upgrade", content)
+
+    content = {
+        "group_id":gid,
+        "app_id":appid,
+        "super":1,
+        "name":Group.GROUP_EVENT_UPGRADE
+    }    
+    publish_message(rds, content)
 
     v = {
         "group_id":gid,
@@ -115,10 +133,9 @@ def add_group_member(gid, members):
     for member_id in members:
         try:
             Group.add_group_member(db, gid, member_id)
-        except umysql.SQLError, e:
-            #1062 duplicate member
-            if e[0] != 1062:
-                raise
+        except pymysql.err.IntegrityError as e:
+            if e.args[0] != 1062:            
+                raise            
 
     db.commit()
 
@@ -130,9 +147,13 @@ def add_group_member(gid, members):
         }
         op = {"add_member":v}
         send_group_notification(appid, gid, op, [member_id])
-         
-        content = "%d,%d"%(gid, member_id)
-        publish_message(rds, "group_member_add", content)
+
+        content = {
+            "group_id":gid,
+            "member_id":member_id,
+            "name":Group.GROUP_EVENT_MEMBER_ADD
+        }        
+        publish_message(rds, content)
 
 
 
@@ -147,9 +168,13 @@ def remove_group_member(gid, memberid):
     }
     op = {"quit_group":v}
     send_group_notification(appid, gid, op, [memberid])
-     
-    content = "%d,%d"%(gid,memberid)
-    publish_message(rds, "group_member_remove", content)
+
+    content = {
+        "group_id":gid,
+        "member_id":memberid,
+        "name":Group.GROUP_EVENT_MEMBER_REMOVE
+    }    
+    publish_message(rds, content)
     
 
 
@@ -172,7 +197,7 @@ if __name__ == "__main__":
             members.append(int(m))
 
         gid = create_group(master, name, is_super, members)
-        print gid
+        print("new group id:", gid)
         
     elif cmd == "delete":
         gid = int(sys.argv[2])
@@ -200,3 +225,24 @@ if __name__ == "__main__":
         groups = get_groups(uid)        
         pp = pprint.PrettyPrinter()
         pp.pprint(groups)
+
+    elif cmd == "test":
+        master = 1
+        name = "test"
+        is_super = 0
+        members = [1, 2, 3, 4]
+        gid = create_group(master, name, is_super, members)
+        print("new group id:", gid)
+      
+
+        add_group_member(gid, [5, 6])
+        remove_group_member(gid, 6)
+        
+        upgrade_group(gid)
+
+        groups = get_groups(master)
+        
+        pp = pprint.PrettyPrinter()
+        pp.pprint(groups)
+
+        delete_group(gid)

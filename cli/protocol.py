@@ -34,6 +34,9 @@ MSG_SYSTEM = 21
 MSG_UNREAD_COUNT = 22
 MSG_CUSTOMER_SERVICE_ = 23
 
+MSG_CUSTOMER = 24
+MSG_CUSTOMER_SUPPORT = 25
+
 MSG_SYNC = 26
 MSG_SYNC_BEGIN = 27
 MSG_SYNC_END = 28
@@ -87,6 +90,22 @@ class RTMessage:
         return str((self.sender, self.receiver, self.content))
 
 
+
+class CustomerMessage:
+    def __init__(self):
+        self.customer_appid = 0
+        self.custoemr_id = 0
+        self.store_id = 0
+        self.seller_id = 0
+        self.timestamp = 0
+        self.content = ""
+
+    def __str__(self):
+        return str((self.customer_appid, self.customer_id, self.store_id,
+                    self.seller_id, self.timestamp, self.content))
+    
+
+    
 def send_message(cmd, seq, msg, sock):
     if cmd == MSG_AUTH_TOKEN:
         b = struct.pack("!BB", msg.platform_id, len(msg.token)) + msg.token + struct.pack("!B", len(msg.device_id)) + msg.device_id
@@ -128,6 +147,11 @@ def send_message(cmd, seq, msg, sock):
         h = struct.pack("!iibbbb", 16, seq, cmd, PROTOCOL_VERSION, 0, 0)
         b = struct.pack("!qq", group_id, sync_key)
         sock.sendall(h+b)
+    elif cmd == MSG_CUSTOMER_SUPPORT or cmd == MSG_CUSTOMER:
+        length = 36 + len(msg.content)        
+        h = struct.pack("!iibbbb", length, seq, cmd, PROTOCOL_VERSION, 0, 0)
+        b = struct.pack("!qqqqi", msg.customer_appid, msg.customer_id, msg.store_id, msg.seller_id, msg.timestamp)
+        sock.sendall(h+b+msg.content)
     else:
         print "eeeeee"
 
@@ -185,6 +209,11 @@ def recv_message(sock):
         return cmd, seq, (group_id, sync_key)
     elif cmd == MSG_GROUP_NOTIFICATION:
         return cmd, seq, content
+    elif cmd == MSG_CUSTOMER or cmd == MSG_CUSTOMER_SUPPORT:
+        cm = CustomerMessage()
+        cm.customer_appid, cm.customer_id, cm.store_id, cm.seller_id, cm.timestamp = struct.unpack("!qqqqi", content[:36])
+        cm.content = content[36:]
+        return cmd, seq, cm
     else:
         print "unknow cmd:", cmd
         return cmd, seq, content

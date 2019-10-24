@@ -3,6 +3,14 @@ import logging
 import redis
 
 class Group(object):
+    GROUP_EVENT_CREATE = "group_create"
+    GROUP_EVENT_DISBAND = "group_disband"
+    GROUP_EVENT_UPGRADE = "group_upgrade"
+    GROUP_EVENT_MEMBER_ADD = "group_member_add"
+    GROUP_EVENT_MEMBER_REMOVE = "group_member_remove"
+    GROUP_EVENT_MEMBER_MUTE = "group_member_mute"
+
+    
     #外部指定groupid
     @staticmethod
     def create_group_ext(db, group_id, appid, master, name, is_super, members):
@@ -119,7 +127,7 @@ class Group(object):
     #groups_actions_id 每个操作的序号，自增
     #groups_actions 记录之前的action ID 和当前的action ID 格式："prev_id:id"
     @staticmethod
-    def publish_message(rds, channel, msg):
+    def publish_message(rds, msg):
         with rds.pipeline() as pipe:
             while True:
                 try:
@@ -141,13 +149,17 @@ class Group(object):
                     group_actions = "%s:%s"%(prev_id, action_id)
                     pipe.set("groups_actions", group_actions)
      
-                    m = "%s:%s"%(group_actions, msg)
-                    pipe.publish(channel, m)
+                    m = msg.copy()
+                    m["previous_action_id"] = prev_id
+                    m["action_id"] = action_id
+                    pipe.xadd("group_manager_stream", m, maxlen=100000)
                     
                     pipe.execute()
-                    logging.info("publish msg:%s actions:%s", msg, group_actions)
+                    logging.info("xadd group event:%s to stream", m)
                     break
-                except redis.WatchError, e:
+                except redis.WatchError as e:
                     logging.info("watch err:%s", e)
+                    
+
         
    
